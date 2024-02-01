@@ -1,6 +1,14 @@
 // For more information, see https://crawlee.dev/
 import { PlaywrightCrawler } from "crawlee";
+import { MongoClient } from "mongodb";
 import { getAccessCode } from "./utils/question.js";
+
+const url = "mongodb://localhost:27017";
+const client = new MongoClient(url);
+const dbName = "xiaohongshu";
+
+await client.connect();
+const db = client.db(dbName);
 
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
@@ -28,39 +36,47 @@ const crawler = new PlaywrightCrawler({
       return;
     }
     await page.getByPlaceholder("输入验证码").fill(accessCode);
-    debugger
+
     const signin = await page.$(".submit");
     await signin?.click();
     await page.waitForLoadState("networkidle");
 
     await page.waitForTimeout(10000);
 
-    await page.screenshot({ path: `./example.png` });
+    debugger;
 
-    
     const data = await page.$$eval("a.title", ($posts) => {
-        const scrapedData: { title: string; href: string }[] = [];
+      const scrapedData: { title: string; href: string }[] = [];
 
-        $posts.forEach(($post) => {
-            scrapedData.push({
-                title: $post.innerHTML,
-                href: $post.getAttribute("href") || "",
-            });
+      $posts.forEach(($post) => {
+        scrapedData.push({
+          title: $post.innerHTML,
+          href: $post.getAttribute("href") || "",
         });
+      });
 
-        return scrapedData;
-    })
+      return scrapedData;
+    });
 
-    debugger
-    await pushData(data);
-    
+    const titles = db.collection("titles");
+
+    try {
+      await titles.insertMany(data,  { ordered: true });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      await client.close();
+    }
+
+    debugger;
+    // await pushData(data);
+
     // debugger;
     // // await page.(".phone>input", "13033602037", { delay: 200 });
     // const title = await page.title();
     // log.info(`Title of ${request.loadedUrl} is '${title}'`);
 
     // // Save results as JSON to ./storage/datasets/default
-    
 
     // // Extract links from the current page
     // // and add them to the crawling queue.
