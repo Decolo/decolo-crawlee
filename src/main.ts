@@ -1,63 +1,48 @@
 // For more information, see https://crawlee.dev/
 import { PlaywrightCrawler } from "crawlee";
-import { MongoClient } from "mongodb";
-import { createClient} from "redis";
 
 import { getAccessCode } from "./utils/question.js";
 
-const url = "mongodb://localhost:27017";
-const mongoClient = new MongoClient(url);
-const dbName = "xiaohongshu";
-
-await mongoClient.connect();
-const db = mongoClient.db(dbName);
-
-const redisClient = createClient({
-  url: "redis://127.0.0.1:6379",
-});
-redisClient.on("error", function (error) {
-  console.error(`Redis error: ${error}.`);
-});
-await redisClient.connect();
+const { db, mongoClient } = await import("./utils/mongo.js");
+const { redisClient } = await import("./utils/redis.js");
 
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
 const crawler = new PlaywrightCrawler({
   headless: false,
   // Use the requestHandler to process each of the crawled pages.
-  async requestHandler({ request, page, enqueueLinks, log, pushData }) {
+  async requestHandler({ page, log }) {
     await page.waitForLoadState("networkidle");
     await page.setViewportSize({ width: 1920, height: 1000 });
-    
+
     try {
-      const xhsCookiesString = await redisClient.get('xhs-cookies');
+      const xhsCookiesString = await redisClient.get("xhs-cookies");
 
       if (xhsCookiesString) {
         const xhsCookie = JSON.parse(xhsCookiesString);
 
         await page.context().addCookies(xhsCookie);
-  
+
         await page.reload();
-  
+
         await page.waitForLoadState("networkidle");
 
         await page.waitForTimeout(3000);
       }
-
-    } catch(e) {
+    } catch (e) {
       console.error(e);
     }
 
     const phone = await page.$(".phone");
 
-    if (phone)  {
+    if (phone) {
       await page.getByPlaceholder("输入手机号").fill("13033602037");
 
       await page
-      .getByText("获取验证码", {
-        exact: true,
-      })
-      .click();
+        .getByText("获取验证码", {
+          exact: true,
+        })
+        .click();
 
       const agree = await page.$(".agree-icon");
       await agree?.click();
@@ -79,12 +64,12 @@ const crawler = new PlaywrightCrawler({
       // // page get cookie
       const cookies = await page.context().cookies();
 
-      debugger
+      debugger;
 
-      await redisClient.set('xhs-cookies', JSON.stringify(cookies));
+      await redisClient.set("xhs-cookies", JSON.stringify(cookies));
     }
-    
-    debugger
+
+    debugger;
     const data = await page.$$eval("a.title", ($posts) => {
       const scrapedData: { title: string; href: string }[] = [];
 
@@ -101,14 +86,13 @@ const crawler = new PlaywrightCrawler({
     const titles = db.collection("titles");
 
     try {
-      await titles.insertMany(data,  { ordered: true });
+      await titles.insertMany(data, { ordered: true });
     } catch (e) {
       console.error(e);
     } finally {
       await mongoClient.close();
       await redisClient.quit();
     }
-
   },
   // Comment this option to scrape the full website.
   maxRequestsPerCrawl: 2,
