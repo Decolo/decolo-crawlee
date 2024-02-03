@@ -2,6 +2,7 @@
 import { PlaywrightCrawler } from "crawlee";
 
 import { getAccessCode } from "./utils/question.js";
+import { XHS_COOKIE_KEY } from "./constants/index.js";
 
 const { db, mongoClient } = await import("./utils/mongo.js");
 const { redisClient } = await import("./utils/redis.js");
@@ -16,7 +17,7 @@ const crawler = new PlaywrightCrawler({
     await page.setViewportSize({ width: 1920, height: 1000 });
 
     try {
-      const xhsCookiesString = await redisClient.get("xhs-cookies");
+      const xhsCookiesString = await redisClient.get(XHS_COOKIE_KEY);
 
       if (xhsCookiesString) {
         const xhsCookie = JSON.parse(xhsCookiesString);
@@ -66,7 +67,7 @@ const crawler = new PlaywrightCrawler({
 
       debugger;
 
-      await redisClient.set("xhs-cookies", JSON.stringify(cookies));
+      await redisClient.set(XHS_COOKIE_KEY, JSON.stringify(cookies));
     }
 
     debugger;
