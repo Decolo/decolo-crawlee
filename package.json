@@ -6,7 +6,8 @@
     "dependencies": {
         "crawlee": "^3.0.0",
         "playwright": "^1.41.1",
-        "mongodb": "^6.3.0"
+        "mongodb": "^6.3.0",
+        "redis": "^4.6.12"
     },
     "devDependencies": {
         "@apify/tsconfig": "^0.1.0",
