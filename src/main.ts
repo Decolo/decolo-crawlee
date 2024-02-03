@@ -1,14 +1,24 @@
 // For more information, see https://crawlee.dev/
 import { PlaywrightCrawler } from "crawlee";
 import { MongoClient } from "mongodb";
+import { createClient} from "redis";
+
 import { getAccessCode } from "./utils/question.js";
 
 const url = "mongodb://localhost:27017";
-const client = new MongoClient(url);
+const mongoClient = new MongoClient(url);
 const dbName = "xiaohongshu";
 
-await client.connect();
-const db = client.db(dbName);
+await mongoClient.connect();
+const db = mongoClient.db(dbName);
+
+const redisClient = createClient({
+  url: "redis://127.0.0.1:6379",
+});
+redisClient.on("error", function (error) {
+  console.error(`Redis error: ${error}.`);
+});
+await redisClient.connect();
 
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
@@ -18,33 +28,63 @@ const crawler = new PlaywrightCrawler({
   async requestHandler({ request, page, enqueueLinks, log, pushData }) {
     await page.waitForLoadState("networkidle");
     await page.setViewportSize({ width: 1920, height: 1000 });
+    
+    try {
+      const xhsCookiesString = await redisClient.get('xhs-cookies');
 
-    await page.getByPlaceholder("输入手机号").fill("13033602037");
-    await page
+      if (xhsCookiesString) {
+        const xhsCookie = JSON.parse(xhsCookiesString);
+
+        await page.context().addCookies(xhsCookie);
+  
+        await page.reload();
+  
+        await page.waitForLoadState("networkidle");
+
+        await page.waitForTimeout(3000);
+      }
+
+    } catch(e) {
+      console.error(e);
+    }
+
+    const phone = await page.$(".phone");
+
+    if (phone)  {
+      await page.getByPlaceholder("输入手机号").fill("13033602037");
+
+      await page
       .getByText("获取验证码", {
         exact: true,
       })
       .click();
 
-    const agree = await page.$(".agree-icon");
-    await agree?.click();
+      const agree = await page.$(".agree-icon");
+      await agree?.click();
 
-    const accessCode = await getAccessCode();
+      const accessCode = await getAccessCode();
 
-    if (!accessCode) {
-      log.error("Please input your access code!");
-      return;
+      if (!accessCode) {
+        log.error("Please input your access code!");
+        return;
+      }
+      await page.getByPlaceholder("输入验证码").fill(accessCode);
+
+      const signin = await page.$(".submit");
+      await signin?.click();
+      await page.waitForLoadState("networkidle");
+
+      await page.waitForTimeout(10000);
+
+      // // page get cookie
+      const cookies = await page.context().cookies();
+
+      debugger
+
+      await redisClient.set('xhs-cookies', JSON.stringify(cookies));
     }
-    await page.getByPlaceholder("输入验证码").fill(accessCode);
-
-    const signin = await page.$(".submit");
-    await signin?.click();
-    await page.waitForLoadState("networkidle");
-
-    await page.waitForTimeout(10000);
-
-    debugger;
-
+    
+    debugger
     const data = await page.$$eval("a.title", ($posts) => {
       const scrapedData: { title: string; href: string }[] = [];
 
@@ -65,25 +105,13 @@ const crawler = new PlaywrightCrawler({
     } catch (e) {
       console.error(e);
     } finally {
-      await client.close();
+      await mongoClient.close();
+      await redisClient.quit();
     }
 
-    debugger;
-    // await pushData(data);
-
-    // debugger;
-    // // await page.(".phone>input", "13033602037", { delay: 200 });
-    // const title = await page.title();
-    // log.info(`Title of ${request.loadedUrl} is '${title}'`);
-
-    // // Save results as JSON to ./storage/datasets/default
-
-    // // Extract links from the current page
-    // // and add them to the crawling queue.
-    // await enqueueLinks();
   },
   // Comment this option to scrape the full website.
-  // maxRequestsPerCrawl: 20,
+  maxRequestsPerCrawl: 2,
   // Uncomment this option to see the browser window.
   // headless: false,
 });
