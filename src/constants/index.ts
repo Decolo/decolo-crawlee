@@ -1,0 +1,1 @@
+export const XHS_COOKIE_KEY = "xhs-cookies";
