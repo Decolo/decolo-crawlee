@@ -1,87 +1,115 @@
 // For more information, see https://crawlee.dev/
-import { PlaywrightCrawler, log } from "crawlee";
-
-import { getAccessCode } from "./utils/question.js";
-import { DOMAIN, XHS_COOKIE_KEY } from "./constants/index.js";
+import { PlaywrightCrawler } from "crawlee";
+import fetch from "node-fetch";
+import { XHS_COOKIE_KEY } from "./constants/index.js";
 import { Page } from "playwright";
+import { generateSearchId, showQR } from "./utils/index.js";
 
 const { db, mongoClient } = await import("./utils/mongo.js");
 const { redisClient } = await import("./utils/redis.js");
 
-let lastIndex = 0;
-const getContentAndInsertDB = async (page: Page) => {
-  const data = await page.$$eval("a.title", ($posts) => {
-    const scrapedData: { title: string; pathname: string }[] = [];
+import {
+  encrypt_mcr,
+  encrypt_encodeUtf8,
+  encrypt_b64Encode,
+} from "./encrypt/index.js";
 
-    $posts.forEach(($post) => {
-      const pathname = $post.getAttribute("href");
-      const title = $post.querySelector("span")?.innerHTML || $post.innerHTML;
+const startFetchContent = async (
+  page: Page
+) => {
+  const cookies = await page.context().cookies()
+  const cookiesStr = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; '); 
+  const cookieDict = cookies.reduce(
+    (map, cookie) => {
+      return {
+        ...map,
+        [cookie.name]: cookie.value,
+      };
+    },
+    {} as Record<string, string>
+  );
 
-      if (!pathname) return;
+  const url = "/api/sns/web/v1/search/notes";
 
-      scrapedData.push({
-        title,
-        pathname: pathname,
-      });
-    });
+  const searchId = generateSearchId();
 
-    return scrapedData;
+  const data = {
+    keyword: "杭州买房",
+    page: 1,
+    page_size: 20,
+    search_id: searchId,
+    sort: "general",
+    note_type: 0,
+  };
+  const headers: Record<string, string> = {};
+  const encrypt: Record<string, string> = await page.evaluate(([url, data]) => {
+    // @ts-ignore
+    return window._webmsxyw(url, data);
+  }, [url, data]);
+  const localStorage: Record<string, string> = await page.evaluate(() => {
+    return window.localStorage;
+  });
+
+  const Xs = encrypt["X-s"];
+  const Xt = encrypt["X-t"];
+
+  headers["X-s"] = Xs;
+  headers["X-t"] = Xt;
+
+  const u = Xt || "";
+  const s = Xs || "";
+  const c = "";
+  const l = (u && s) || c;
+  const f = localStorage["b1"];
+  const p = localStorage["b1b1"] || "1";
+
+  const h = {
+    s0: "Mac OS",
+    s1: "",
+    x0: p,
+    x1: "3.6.8",
+    x2: "Mac OS",
+    x3: "xhs-pc-web",
+    x4: "4.5.1",
+    x5: cookieDict["a1"],
+    x6: u,
+    x7: s,
+    x8: f,
+    x9: encrypt_mcr(u + s + f),
+    x10: l,
+  };
+
+  headers["X-S-Common"] = encrypt_b64Encode(
+    encrypt_encodeUtf8(JSON.stringify(h))
+  );
+
+    // debugger
+  const res = await fetch("https://edith.xiaohongshu.com/api/sns/web/v1/search/notes", {
+    headers: {
+      accept: "application/json, text/plain, */*",
+      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+      "content-type": "application/json;charset=UTF-8",
+      "sec-ch-ua":
+        '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"macOS"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-site",
+      ...headers,
+      cookie: cookiesStr,
+      Referer: "https://www.xiaohongshu.com/",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+    },
+    body: JSON.stringify(data),
+    method: "POST",
   });
   
-  const items = data.slice(lastIndex);
-
-  lastIndex = data.length;
-
-  const contents = db.collection("contents");
-
-  const itemsToInsert = [];
-
-  for (const item of items) {
-    // 检查当前的 'href' 是否已经存在于集合中
-    const existingDocument = await contents.findOne({
-      href: `${DOMAIN}${item.pathname}`,
-    });
-
-    // 如果 'href' 不在集合中，那么添加这个数据到筛选后的数据列表
-    if (!existingDocument) {
-      itemsToInsert.push({
-        title: item.title,
-        href: `${DOMAIN}${item.pathname}`,
-      });
-    }
-  }
-  debugger;
-
-  if (!itemsToInsert.length) return;
-
-  try {
-    await contents.insertMany(
-      itemsToInsert,
-      { ordered: true }
-    );
-  } catch (e) {
-    log.error(`Insert data error: ${e}`);
-  }
-};
-
-const startFetchContent = async (page: Page) => {
-  await getContentAndInsertDB(page);
-
-  let _lastIndex = 0;
-  while (_lastIndex !== lastIndex) {
-    _lastIndex = lastIndex;
-
-    await page.evaluate(() => {
-      debugger
-      window.scrollTo(0, document.body.scrollHeight);
-    });
+  if (res.status === 200) {
+    const result = await res.json();
     debugger
-    
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(10000);
-    debugger;
-
-    await getContentAndInsertDB(page);
+  } else {
+    return false;
   }
 };
 
@@ -94,9 +122,13 @@ const crawler = new PlaywrightCrawler({
     await page.waitForLoadState("networkidle");
     await page.setViewportSize({ width: 1920, height: 1000 });
 
+    await page.addInitScript(
+      `document.body.appendChild(Object.assign(document.createElement('script'), {src: 'https://gitcdn.xyz/repo/berstend/puppeteer-extra/stealth-js/stealth.min.js'}))`
+    );
+
     try {
       const xhsCookiesString = await redisClient.get(XHS_COOKIE_KEY);
-
+      
       if (xhsCookiesString) {
         const xhsCookie = JSON.parse(xhsCookiesString);
 
@@ -109,47 +141,26 @@ const crawler = new PlaywrightCrawler({
         await page.waitForTimeout(3000);
       }
     } catch (e) {
-      console.error(e);
+      log.error(String(e));
     }
-    debugger;
-    const phone = await page.$(".phone");
+    
+    const logined = await page.$(".login-container");
 
-    if (phone) {
-      await page.getByPlaceholder("输入手机号").fill("13033602037");
+    if (logined) {
+      const qrcodeImgElement = await page.$(".qrcode-img");
+      if (!qrcodeImgElement) return;
 
-      await page
-        .getByText("获取验证码", {
-          exact: true,
-        })
-        .click();
+      const qrcodeImage = await qrcodeImgElement?.getAttribute("src");
+      if (!qrcodeImage) return;
 
-      const agree = await page.$(".agree-icon");
-      await agree?.click();
-
-      const accessCode = await getAccessCode();
-
-      if (!accessCode) {
-        log.error("Please input your access code!");
-        return;
-      }
-      await page.getByPlaceholder("输入验证码").fill(accessCode);
-
-      const signin = await page.$(".submit");
-      await signin?.click();
-      await page.waitForLoadState("networkidle");
-
-      await page.waitForTimeout(5000);
-
-      // // page get cookie
+      await showQR(qrcodeImage, page);
+      // // // page get cookie
       const cookies = await page.context().cookies();
-
-      debugger;
 
       await redisClient.set(XHS_COOKIE_KEY, JSON.stringify(cookies));
     }
-
+    
     await startFetchContent(page);
-    debugger
     await mongoClient.close();
     await redisClient.quit();
   },
@@ -157,9 +168,8 @@ const crawler = new PlaywrightCrawler({
   maxRequestsPerCrawl: 1,
   // Uncomment this option to see the browser window.
   // headless: false,
+  // retryOnBlocked: false,
 });
 
 // Add first URL to the queue and start the crawl.
-await crawler.run([
-  "https://www.xiaohongshu.com/search_result/?keyword=%25E6%2583%2585%25E8%25B6%25A3&source=web_search_result_notes&type=51",
-]);
+await crawler.run(["https://www.xiaohongshu.com"]);
