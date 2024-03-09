@@ -1,21 +1,16 @@
 // For more information, see https://crawlee.dev/
-import { PlaywrightCrawler } from "crawlee";
+import { Log, PlaywrightCrawler } from "crawlee";
 import fetch from "node-fetch";
 import { XHS_COOKIE_KEY } from "./constants/index.js";
 import { Page } from "playwright";
-import { generateSearchId, showQR } from "./utils/index.js";
+import { delay, generateSearchId, getHeaders, showQR } from "./utils/index.js";
 
 const { db, mongoClient } = await import("./utils/mongo.js");
 const { redisClient } = await import("./utils/redis.js");
 
-import {
-  encrypt_mcr,
-  encrypt_encodeUtf8,
-  encrypt_b64Encode,
-} from "./encrypt/index.js";
-
 const startFetchContent = async (
-  page: Page
+  page: Page,
+  log: Log
 ) => {
   const cookies = await page.context().cookies()
   const cookiesStr = cookies.map(cookie => `${cookie.name}=${cookie.value}`).join('; '); 
@@ -30,93 +25,105 @@ const startFetchContent = async (
   );
 
   const url = "/api/sns/web/v1/search/notes";
+  const keyword = "杭州买房";
 
-  const searchId = generateSearchId();
+  let currentPage = 1;
 
-  const data = {
-    keyword: "杭州买房",
-    page: 1,
-    page_size: 20,
-    search_id: searchId,
-    sort: "general",
-    note_type: 0,
-  };
-  const headers: Record<string, string> = {};
-  const encrypt: Record<string, string> = await page.evaluate(([url, data]) => {
-    // @ts-ignore
-    return window._webmsxyw(url, data);
-  }, [url, data]);
-  const localStorage: Record<string, string> = await page.evaluate(() => {
-    return window.localStorage;
-  });
+  while (true) {
+    const searchId = generateSearchId();
 
-  const Xs = encrypt["X-s"];
-  const Xt = encrypt["X-t"];
+    const data = {
+      keyword,
+      page: currentPage,
+      page_size: 20,
+      search_id: searchId,
+      sort: "general",
+      note_type: 0,
+    };
 
-  headers["X-s"] = Xs;
-  headers["X-t"] = Xt;
+    const headers = await getHeaders(page, {
+      url,
+      data,
+      cookieDict,
+    })
 
-  const u = Xt || "";
-  const s = Xs || "";
-  const c = "";
-  const l = (u && s) || c;
-  const f = localStorage["b1"];
-  const p = localStorage["b1b1"] || "1";
+    try {
+      const res = await fetch("https://edith.xiaohongshu.com/api/sns/web/v1/search/notes", {
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "content-type": "application/json;charset=UTF-8",
+        "sec-ch-ua":
+          '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"macOS"',
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-site",
+        ...headers,
+        cookie: cookiesStr,
+        Referer: "https://www.xiaohongshu.com/",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+      },
+      body: JSON.stringify(data),
+      method: "POST",
+      });
 
-  const h = {
-    s0: "Mac OS",
-    s1: "",
-    x0: p,
-    x1: "3.6.8",
-    x2: "Mac OS",
-    x3: "xhs-pc-web",
-    x4: "4.5.1",
-    x5: cookieDict["a1"],
-    x6: u,
-    x7: s,
-    x8: f,
-    x9: encrypt_mcr(u + s + f),
-    x10: l,
-  };
+      if (res.status === 200) {
+        const result = await res.json();
 
-  headers["X-S-Common"] = encrypt_b64Encode(
-    encrypt_encodeUtf8(JSON.stringify(h))
-  );
+        if (!(result as any)?.data?.has_more) {
+          log.info("no more data");
+          return;
+        }
 
-    // debugger
-  const res = await fetch("https://edith.xiaohongshu.com/api/sns/web/v1/search/notes", {
-    headers: {
-      accept: "application/json, text/plain, */*",
-      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-      "content-type": "application/json;charset=UTF-8",
-      "sec-ch-ua":
-        '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-      "sec-ch-ua-mobile": "?0",
-      "sec-ch-ua-platform": '"macOS"',
-      "sec-fetch-dest": "empty",
-      "sec-fetch-mode": "cors",
-      "sec-fetch-site": "same-site",
-      ...headers,
-      cookie: cookiesStr,
-      Referer: "https://www.xiaohongshu.com/",
-      "Referrer-Policy": "strict-origin-when-cross-origin",
-    },
-    body: JSON.stringify(data),
-    method: "POST",
-  });
-  
-  if (res.status === 200) {
-    const result = await res.json();
-    debugger
-  } else {
-    return false;
+        const items = (result as any)?.data?.items;
+
+        if (!Array.isArray(items)) {
+          log.info("invalid data structure");
+          return;
+        }
+
+        const dealItems = items.filter((item) => item.id).map((item) => {
+          return {
+            id: item?.id,
+            model_type: item?.model_type,
+            display_title: item?.note_card?.display_title,
+            interact_info: item?.note_card?.interact_info,
+            user: {
+              nick_name: item?.note_card?.user?.nick_name,
+              user_id: item?.note_card?.user?.user_id,
+            },
+            keyword,
+          }
+        })
+
+        for (const item of dealItems) {
+          await db.collection("house").updateOne(
+            { "id": item.id }, 
+            { "$set": item },
+            { "upsert": true }
+          );
+        }
+        debugger
+        currentPage++;
+
+        await delay(Math.floor(1000 * Math.random() + 1000));
+      } else {
+        throw res.statusText;
+      }
+
+    } catch (e) {
+      log.error(String(e));
+      break;
+    }
   }
 };
 
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
 const crawler = new PlaywrightCrawler({
-  headless: false,
+  headless: true,
   // Use the requestHandler to process each of the crawled pages.
   async requestHandler({ page, log }) {
     await page.waitForLoadState("networkidle");
@@ -153,22 +160,23 @@ const crawler = new PlaywrightCrawler({
       const qrcodeImage = await qrcodeImgElement?.getAttribute("src");
       if (!qrcodeImage) return;
 
+      log.info("check temp/tmp.jpy");
       await showQR(qrcodeImage, page);
       // // // page get cookie
       const cookies = await page.context().cookies();
 
       await redisClient.set(XHS_COOKIE_KEY, JSON.stringify(cookies));
     }
-    
-    await startFetchContent(page);
+    await startFetchContent(page, log);
     await mongoClient.close();
     await redisClient.quit();
   },
   // Comment this option to scrape the full website.
   maxRequestsPerCrawl: 1,
   // Uncomment this option to see the browser window.
-  // headless: false,
-  // retryOnBlocked: false,
+  retryOnBlocked: true,
+  maxRequestRetries: 1,
+  requestHandlerTimeoutSecs: 60 * 60 * 2 // 2h
 });
 
 // Add first URL to the queue and start the crawl.
