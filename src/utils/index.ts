@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import readline from "readline";
 import { Page } from "playwright";
 import {
   encrypt_mcr,
@@ -62,7 +63,7 @@ export const showQR = async (base64: string, page: Page) => {
   const base64buffer = Buffer.from(base64.split(",")[1], "base64");
 
   fs.writeFileSync(getCWDreltivePath("./temp/tmp.jpg"), base64buffer);
-  debugger
+  debugger;
 
   await loopCheckQR(page);
 
@@ -139,4 +140,28 @@ export const delay = (ms: number) => {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
-}
+};
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+});
+
+export const getAccessCode = (): Promise<string> => {
+  return new Promise((resolve) => {
+    rl.question("Input your access code:", (code) => {
+      console.log(`Done，${code}!`);
+      rl.close();
+      resolve(code);
+    });
+  });
+};
+
+export const isEmpty = (obj: any) => {
+  return (
+    obj === undefined ||
+    obj === null ||
+    (typeof obj === "string" && !obj.trim()) ||
+    (Array.isArray(obj) && obj.length === 0)
+  );
+};
