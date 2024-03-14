@@ -1,7 +1,11 @@
 // For more information, see https://crawlee.dev/
 import { Log, PlaywrightCrawler } from "crawlee";
 import fetch from "node-fetch";
-import { XHS_COOKIE_KEY } from "./constants/index.js";
+import {
+  XHS_COOKIE_KEY,
+  API_DOMAIN,
+  DEFAULT_HEADERS,
+} from "./constants/index.js";
 import { Page } from "playwright";
 import {
   delay,
@@ -15,13 +19,96 @@ import { configs } from "../config.js";
 const { db, mongoClient } = await import("./utils/mongo.js");
 const { redisClient } = await import("./utils/redis.js");
 
-const searchNotes = async (
-  page: Page,
-  log: Log,
-  keyword: string,
-  collection: string,
-  payload: Record<string, string>
-) => {
+const fetchNote = async ({
+  page,
+  id,
+  cookiesStr,
+  cookieDict,
+  log,
+}: {
+  page: Page;
+  id: string;
+  cookiesStr: string;
+  cookieDict: Record<string, string>;
+  log: Log;
+}) => {
+  const url = "/api/sns/web/v1/feed";
+
+  const data = {
+    source_note_id: id,
+    image_formats: ["jpg", "webp", "avif"],
+    extra: { need_body_topic: "1" },
+  };
+
+  const headers = await getHeaders(page, {
+    url,
+    data,
+    cookieDict,
+  });
+
+  try {
+    const res = await fetch(`${API_DOMAIN}${url}`, {
+      headers: {
+        ...DEFAULT_HEADERS,
+        ...headers,
+        cookie: cookiesStr,
+      },
+      body: JSON.stringify(data),
+      method: "POST",
+    });
+
+    if (res.status === 200) {
+      const result = await res.json();
+
+      if ((result as any)?.code) {
+        log.error((result as any)?.msg);
+        return;
+      }
+
+      if (!result || !(result as any)?.data) {
+        log.error("invalid response");
+        return null;
+      }
+
+      const detailItems = (result as any)?.data?.items;
+      if (!Array.isArray(detailItems)) {
+        log.error("invalid response structure");
+        return null;
+      }
+
+      return detailItems
+        .filter((item) => item?.id)
+        .map((item) => {
+          const { at_user_list, share_info, ...rest } = item.note_card;
+          return {
+            id: item.id,
+            model_type: item.model_type,
+            ...rest,
+          };
+        });
+    } else {
+      throw res.statusText;
+    }
+
+  } catch (e) {
+    log.error("** fetch note error **" + String(e));
+    return null;
+  }
+};
+
+const searchNotes = async ({
+  page,
+  log,
+  keyword,
+  collection,
+  payload,
+}: {
+  page: Page;
+  log: Log;
+  keyword: string;
+  collection: string;
+  payload?: Record<string, string>;
+}) => {
   if (isEmpty(keyword) || isEmpty(collection)) {
     log.error(`empty keyword or collection`);
     return;
@@ -61,32 +148,23 @@ const searchNotes = async (
     });
 
     try {
-      const res = await fetch(
-        "https://edith.xiaohongshu.com/api/sns/web/v1/search/notes",
-        {
-          headers: {
-            accept: "application/json, text/plain, */*",
-            "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
-            "content-type": "application/json;charset=UTF-8",
-            "sec-ch-ua":
-              '"Chromium";v="122", "Not(A:Brand";v="24", "Google Chrome";v="122"',
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": '"macOS"',
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-            ...headers,
-            cookie: cookiesStr,
-            Referer: "https://www.xiaohongshu.com/",
-            "Referrer-Policy": "strict-origin-when-cross-origin",
-          },
-          body: JSON.stringify(data),
-          method: "POST",
-        }
-      );
+      const res = await fetch(`${API_DOMAIN}${url}`, {
+        headers: {
+          ...DEFAULT_HEADERS,
+          ...headers,
+          cookie: cookiesStr,
+        },
+        body: JSON.stringify(data),
+        method: "POST",
+      });
 
       if (res.status === 200) {
         const result = await res.json();
+        
+        if ((result as any)?.code) {
+          log.error((result as any)?.msg);
+          return;
+        }
 
         if (!(result as any)?.data?.has_more) {
           log.info("no more data");
@@ -113,7 +191,7 @@ const searchNotes = async (
                 user_id: item?.note_card?.user?.user_id,
               },
               keyword,
-              payload
+              ...(payload || {}),
             };
           });
 
@@ -124,13 +202,26 @@ const searchNotes = async (
         );
 
         for (const item of dealItems) {
-          await db
-            .collection(collection)
-            .updateOne(
-              { id: item.id },
-              { $setOnInsert: item },
-              { upsert: true }
-            );
+          await delay(Math.floor(500 * Math.random()) + 100);
+
+          const noteDetails = await fetchNote({
+            page,
+            id: item.id,
+            cookiesStr,
+            cookieDict,
+            log,
+          });
+
+          await db.collection(collection).updateOne(
+            { id: item.id },
+            {
+              $setOnInsert: {
+                ...item,
+                node_details: noteDetails,
+              },
+            },
+            { upsert: true }
+          );
         }
 
         log.info(
@@ -140,12 +231,12 @@ const searchNotes = async (
 
         currentPage++;
 
-        await delay(Math.floor(1000 * Math.random() + 1000));
+        await delay(Math.floor(600 * Math.random() + 400));
       } else {
         throw res.statusText;
       }
     } catch (e) {
-      log.error(String(e));
+      log.error("** searchNotes error **" + String(e));
       break;
     }
   }
@@ -160,7 +251,7 @@ const startTasks = async (page: Page, log: Log) => {
   for (const config of configs) {
     const keywords = config?.keywords;
     const collection = config?.collection;
-    const payload = config?.payload
+    const payload = config?.payload;
 
     if (!Array.isArray(keywords)) {
       log.error(`empty keywords`);
@@ -171,7 +262,13 @@ const startTasks = async (page: Page, log: Log) => {
       log.info(
         `start search "${keyword}", save into ${collection}. ${new Date()}`
       );
-      await searchNotes(page, log, keyword, collection, payload);
+      await searchNotes({
+        page,
+        log,
+        keyword,
+        collection,
+        payload,
+      });
     }
   }
 };

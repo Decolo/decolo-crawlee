@@ -62,13 +62,14 @@ const loopCheckQR = async (page: Page) => {
 export const showQR = async (base64: string, page: Page) => {
   const base64buffer = Buffer.from(base64.split(",")[1], "base64");
 
-  fs.writeFileSync(getCWDreltivePath("./temp/tmp.jpg"), base64buffer);
-  debugger;
+  fs.writeFileSync(getCWDreltivePath("./tmp.jpg"), base64buffer);
 
   await loopCheckQR(page);
 
-  fs.unlinkSync("./temp");
+  fs.unlinkSync("./tmp.jpg");
 };
+
+type PlainMap = Record<string, number | string | number[] | string[]>;
 
 export const getHeaders = async (
   page: Page,
@@ -78,7 +79,7 @@ export const getHeaders = async (
     cookieDict,
   }: {
     url: string;
-    data: Record<string, number | string>;
+    data: Record<string, number | string | number[] | string[] | PlainMap>;
     cookieDict: Record<string, string>;
   }
 ) => {
