@@ -276,28 +276,30 @@ const startTasks = async (page: Page, log: Log) => {
 // PlaywrightCrawler crawls the web using a headless
 // browser controlled by the Playwright library.
 const crawler = new PlaywrightCrawler({
-  headless: true,
+  // headless: true,
+  headless: false,
   // Use the requestHandler to process each of the crawled pages.
   async requestHandler({ page, log }) {
     log.info("----");
-    await page.waitForLoadState("networkidle");
+    // await page.waitForLoadState("networkidle");
     await page.setViewportSize({ width: 1920, height: 1000 });
 
-    await page.addInitScript(
-      `document.body.appendChild(Object.assign(document.createElement('script'), {src: 'https://gitcdn.xyz/repo/berstend/puppeteer-extra/stealth-js/stealth.min.js'}))`
-    );
+    // await page.addInitScript(
+    //   `document.body.appendChild(Object.assign(document.createElement('script'), {src: 'https://gitcdn.xyz/repo/berstend/puppeteer-extra/stealth-js/stealth.min.js'}))`
+    // );
 
     try {
       const xhsCookiesString = await redisClient.get(XHS_COOKIE_KEY);
 
       if (xhsCookiesString) {
         const xhsCookie = JSON.parse(xhsCookiesString);
+        debugger
 
         await page.context().addCookies(xhsCookie);
 
         await page.reload();
 
-        await page.waitForLoadState("networkidle");
+        // await page.waitForLoadState("networkidle");
 
         await page.waitForTimeout(3000);
       }
@@ -325,7 +327,33 @@ const crawler = new PlaywrightCrawler({
       log.info("cookie is valid, no need to login again.");
     }
 
-    await startTasks(page, log);
+    const searchInput = await page.$("#search-input");
+
+    if (searchInput) {
+      await searchInput?.fill("搭子");
+      
+      const searchBtn = await page.$(".search-icon");
+      
+      if (searchBtn) {
+        await searchBtn.click();
+      }
+    }
+    
+    await page.waitForTimeout(5000);
+    
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => {
+        window.scrollTo(0, document.body.scrollHeight);
+      });
+      debugger
+      await page.waitForTimeout(2000);
+    }
+    debugger
+    // await page.evaluate(() => {
+    //   window.scrollTo(0, document.body.scrollHeight / 2);
+    // })
+    // debugger
+    // await startTasks(page, log);
     await mongoClient.close();
     await redisClient.quit();
   },

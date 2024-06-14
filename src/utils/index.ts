@@ -92,7 +92,6 @@ export const getHeaders = async (
     },
     [url, data]
   );
-
   const localStorage: Record<string, string> = await page.evaluate(() => {
     return window.localStorage;
   });
